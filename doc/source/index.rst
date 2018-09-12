@@ -17,6 +17,7 @@ TreeTime is organized as a hierarchy of classes. The GTR class implements sequen
    clock_tree
    treetime
    vcf_utils
+   seq_utils
 
 
 .. automodule:: treetime
@@ -41,27 +42,43 @@ Utility code
 :doc:`VCF tools<vcf_utils>`
 -------------------------------
 
+:doc:`Seq tools<seq_utils>`
+-------------------------------
+
 
 Command-line functions
 ======================
-TreeTime is designed to be part of python workflows, but for a number of standard
-tasks we have implemented scripts that can be called from the command line like
-regular linux programs.
+TreeTime is designed to be part of python workflows, but we have exposed a number of standard
+tasks via a command-line interface.
+The TreeTime command-line tool is called :code:`treetime`.
+Examples and documentation of the command-line interface can be found in the github repo https://github.com/neherlab/treetime_examples.
+In its standard mode, it will take a tree, an alignment, and file with dates as input and estimate a time-scaled phylogeny.
+The full set of options are available via :code:`treetime -h`.
 
-homoplasy_scanner
------------------
 
-ancestral_reconstruction
-------------------------
+Subcommand :code:`treetime ancestral`
+-------------------------------------
+This subcommand reconstructs ancestral sequences and maps mutations to the tree.
+It produces an alignment file containing inferred ancestral sequences and a tree file
+with mutations included as comments. The inferred GTR model is written to stdout.
 
-temporal_signal
+Subcommand :code:`treetime homoplasy`
+-------------------------------------
+Reconstructs ancestral sequences and maps mutations to the tree.
+The tree is then scanned for homoplasies. An excess number of homoplasies
+might suggest contamination, recombination, culture adaptation or similar.
+Results are printed to stdout.
+
+
+Subcommand :code:`treetime clock`
 ---------------
+Calculates the root-to-tip regression and quantifies the 'clock-i-ness' of the tree.
+It will reroot the tree to maximize the clock-like
+signal and recalculate branch length unless run with :code:`--keep_root`.
 
-timetree_inference
-------------------
-
-mugration
----------
+Subcommand :code:`treetime mugration`
+-------------------------------------
+Reconstructs discrete ancestral states, for example geographic location, host, or similar.
 
 
 

@@ -1,9 +1,10 @@
 from __future__ import division, print_function, absolute_import
+from collections import defaultdict
 import numpy as np
-from  treetime import config as ttconf
-from treetime.seq_utils import alphabets, profile_maps, alphabet_synonyms
-from treetime.aa_models  import JTT92
-from treetime.nuc_models import JC69, K80, F81, HKY85, T92, TN93
+from treetime import config as ttconf
+from .seq_utils import alphabets, profile_maps, alphabet_synonyms
+from .aa_models  import JTT92
+
 
 class GTR(object):
     """
@@ -18,29 +19,29 @@ class GTR(object):
         ----------
 
          alphabet : str, numpy.array
-            alphabet of the sequence. If string passed, it is understood as
-            alphabet name. In this case, the alphabet and its profile map pulled
-            from seq_utils.
+            Alphabet of the sequence. If a string is passed, it is understood as
+            an alphabet name. In this case, the alphabet and its profile map are pulled
+            from :py:obj:`treetime.seq_utils`.
 
-            If numpy array of characters passed, a new alphabet is constructed,
+            If a numpy array of characters is passed, a new alphabet is constructed,
             and the default profile map is atached to it.
 
          prof_map : dict
-            dictionary linking characters in the sequence to likelihood
-            of observing characters in the alphabt. This is used to
+            Dictionary linking characters in the sequence to the likelihood
+            of observing characters in the alphabet. This is used to
             implement ambiguous characters like 'N'=[1,1,1,1] which are
-            equally likely any of the 4 nucleotides. Standard profile_maps
-            are defined in file seq_utils.py. If none is provided, no ambigous
+            equally likely to be any of the 4 nucleotides. Standard profile_maps
+            are defined in file seq_utils.py. If None is provided, no ambigous
             characters are supported.
 
          logger : callable
-            custom logging function that should take arguments (msg, level, warn=False)
-            where msg is a string, level an integer to be compared against verbose.
+            Custom logging function that should take arguments (msg, level, warn=False),
+            where msg is a string and level an integer to be compared against verbose.
 
         """
         self.debug=False
-        if type(alphabet)==str:
-            if (alphabet not in alphabet_synonyms):
+        if isinstance(alphabet, str):
+            if alphabet not in alphabet_synonyms:
                 raise AttributeError("Unknown alphabet type specified")
             else:
                 tmp_alphabet = alphabet_synonyms[alphabet]
@@ -55,10 +56,11 @@ class GTR(object):
                 self.profile_map = prof_map
 
         if logger is None:
-            def logger(*args,**kwargs):
+            def logger_default(*args,**kwargs):
+                """standard logging function if none provided"""
                 if self.debug:
                     print(*args)
-            self.logger = logger
+            self.logger = logger_default
         else:
             self.logger = logger
         n_states = len(self.alphabet)
@@ -89,11 +91,18 @@ class GTR(object):
 
         # init all matrices with dummy values
         self.logger("GTR: init with dummy values!", 3)
+        self.v = None # right eigenvectors
+        self.v_inv = None # left eigenvectors
+        self.eigenvals =None # eigenvalues
         self.assign_rates()
 
 
     @property
     def Q(self):
+        """function that return the product of the transtiion matrix
+           and the equilibrium frequencies to option the rate matrix
+           of the GTR model
+        """
         return (self.W*self.Pi).T
 
 
@@ -186,12 +195,15 @@ class GTR(object):
          pi : n vector
             Equilibrium frequencies
 
+         **kwargs:
+            Key word arguments to be passed
+
         Keyword Args
         ------------
 
          alphabet : str
             Specify alphabet when applicable. If the alphabet specification is
-            required, but no alphabet specified, the nucleotide will be used as
+            required, but no alphabet is specified, the nucleotide alphabet will be used as
             default.
 
         """
@@ -208,13 +220,9 @@ class GTR(object):
         ----------
 
          model : str
-            Model to create. List of the available models is
-            (see description below)
-
-        Keyword Args
-        ------------
-
-         model arguments
+            Model to create. See list of available models below
+         **kwargs:
+            Key word arguments to be passed to the model
 
 
         **Available models**
@@ -325,6 +333,7 @@ class GTR(object):
                 (kappa1, kappa2) are specified relative to this rate
 
         """
+        from .nuc_models import JC69, K80, F81, HKY85, T92, TN93
 
         if model.lower() in ['jc', 'jc69', 'jukes-cantor', 'jukes-cantor69', 'jukescantor', 'jukescantor69']:
             return JC69(**kwargs)
@@ -347,7 +356,7 @@ class GTR(object):
     @classmethod
     def random(cls, mu=1.0, alphabet='nuc'):
         """
-        Create random GTR model
+        Creates a random GTR model
 
         Parameters
         ----------
@@ -376,7 +385,9 @@ class GTR(object):
         """
         Infer a GTR model by specifying the number of transitions and time spent in each
         character. The basic equation that is being solved is
-            :math:`n_{ij} = pi_i W_{ij} T_j`
+
+        :math:`n_{ij} = pi_i W_{ij} T_j`
+
         where :math:`n_{ij}` are the transitions, :math:`pi_i` are the equilibrium
         state frequencies, :math:`W_{ij}` is the "substitution attempt matrix",
         while :math:`T_i` is the time on the tree spent in character state
@@ -384,7 +395,7 @@ class GTR(object):
         to account for the fact that the root of the tree is in a particular
         state. the modified equation is
 
-            :math:`n_{ij} + pc = pi_i W_{ij} (T_j+pc+root\_state)`
+        :math:`n_{ij} + pc = pi_i W_{ij} (T_j+pc+root\_state)`
 
         Parameters
         ----------
@@ -404,12 +415,15 @@ class GTR(object):
             Pseudocounts, this determines the lower cutoff on the rate when
             no substitutions are observed
 
+         **kwargs:
+            Key word arguments to be passed
+
         Keyword Args
         ------------
 
          alphabet : str
             Specify alphabet when applicable. If the alphabet specification
-            is required, but no alphabet specified, the nucleotide will be used as default.
+            is required, but no alphabet is specified, the nucleotide alphabet will be used as default.
 
         """
         from scipy import linalg as LA
@@ -450,14 +464,13 @@ class GTR(object):
             mu = nij.sum()/(ttconf.TINY_NUMBER + np.sum(pi * (W_ij.dot(Ti))))
         if count >= Nit:
             gtr.logger('WARNING: maximum number of iterations has been reached in GTR inference',3, warn=True)
-            np.min(pi.sum(axis=0)), np.max(pi.sum(axis=0))
             if LA.norm(pi_old-pi) > dp:
                 gtr.logger('the iterative scheme has not converged',3,warn=True)
             elif np.abs(1-np.max(pi.sum(axis=0))) > dp:
                 gtr.logger('the iterative scheme has converged, but proper normalization was not reached',3,warn=True)
         if gtr.gap_index>=0:
             if pi[gtr.gap_index]<gap_limit:
-              gtr.logger('The model allows for gaps which are estimated to occur at a low fraction of %1.3e'%pi[gtr.gap_index]+
+                gtr.logger('The model allows for gaps which are estimated to occur at a low fraction of %1.3e'%pi[gtr.gap_index]+
                        '\n\t\tthis can potentially result in artificats.'+
                        '\n\t\tgap fraction will be set to %1.4f'%gap_limit,2,warn=True)
             pi[gtr.gap_index] = gap_limit
@@ -510,9 +523,9 @@ class GTR(object):
     def compress_sequence_pair(self, seq_p, seq_ch, pattern_multiplicity=None,
                                ignore_gaps=False):
         '''
-        make a compressed representation of a pair of sequences only counting
+        Make a compressed representation of a pair of sequences, only counting
         the number of times a particular pair of states (e.g. (A,T)) is observed
-        the the aligned sequences of parent and child
+        in the aligned sequences of parent and child.
 
         Parameters
         ----------
@@ -523,20 +536,20 @@ class GTR(object):
          seq_ch: numpy array
             Child sequence as numpy array of chars
 
-         pattern_multiplicity : numpy array, None
-            if sequences are reduced by combining identical alignment patterns,
+         pattern_multiplicity : numpy array
+            If sequences are reduced by combining identical alignment patterns,
             these multplicities need to be accounted for when counting the number
             of mutations across a branch. If None, all pattern are assumed to
             occur exactly once.
 
-         ignore_gap: bool, default False
+         ignore_gap: bool
             Whether or not to include gapped positions of the alignment
             in the multiplicity count
 
         Returns
         -------
           seq_pair : list
-            [(0,1), (2,2), (3,4)] list of parent_child state pairs
+            :code:`[(0,1), (2,2), (3,4)]` list of parent_child state pairs
             as indices in the alphabet
 
           multiplicity : numpy array
@@ -575,10 +588,10 @@ class GTR(object):
             if ignore_gaps:  # if gaps are ignored skip positions where one or the other sequence is gapped
                 for i in range(len(seq_p)):
                     if self.gap_index!=num_seqs[0][i] and self.gap_index!=num_seqs[1][i]:
-                        pair_count[(num_seqs[0][i],num_seqs[1][i])]+=multiplicity[i]
+                        pair_count[(num_seqs[0][i],num_seqs[1][i])]+=pattern_multiplicity[i]
             else: # otherwise, just count
                 for i in range(len(seq_p)):
-                    pair_count[(num_seqs[0][i],num_seqs[1][i])]+=multiplicity[i]
+                    pair_count[(num_seqs[0][i],num_seqs[1][i])]+=pattern_multiplicity[i]
             pair_count = pair_count.items()
 
         return (np.array([x[0] for x in pair_count], dtype=int),    # [(child_nuc, parent_nuc),()...]
@@ -588,30 +601,31 @@ class GTR(object):
 ########################################################################
 ### evolution functions
 ########################################################################
-    def prob_t_compressed(self, seq_pair, multiplicity, t, return_log=False, derivative=0):
+    def prob_t_compressed(self, seq_pair, multiplicity, t, return_log=False):
         '''
-        calculate the probability of observing a sequence pair at a distance t
+        Calculate the probability of observing a sequence pair at a distance t,
+        for compressed sequences
 
         Parameters
         ----------
 
           seq_pair : numpy array
-            np.array([(0,1), (2,2), ()..]) as indicies of
-            pairs of aligned positions. (e.g. 'A'==0, 'C'==1 etc)
-            this only lists all occuring parent-child state pairs, order is irrelevant
+            :code:`np.array([(0,1), (2,2), ()..])` as indicies of
+            pairs of aligned positions. (e.g. 'A'==0, 'C'==1 etc).
+            This only lists all occuring parent-child state pairs, order is irrelevant
 
           multiplicity : numpy array
-            The number of times a parent-child state pair is observed
-            this allows to compress the sequence representation
+            The number of times a parent-child state pair is observed.
+            This allows compression of the sequence representation
 
           t : float
             Length of the branch separating parent and child
 
-          return_log : bool, default False
+          return_log : bool
             Whether or not to exponentiate the result
 
         '''
-        if (t<0):
+        if t<0:
             logP = -ttconf.BIG_NUMBER
         else:
             tmp_eQT = self.expQt(t)
@@ -619,42 +633,40 @@ class GTR(object):
             logQt = np.log(tmp_eQT + ttconf.TINY_NUMBER*(bad_indices))
             logQt[np.isnan(logQt) | np.isinf(logQt) | bad_indices] = -ttconf.BIG_NUMBER
             logP = np.sum(logQt[seq_pair[:,1], seq_pair[:,0]]*multiplicity)
-            if return_log:
-                return logP
-            else:
-                return np.exp(logP)
+
+        return logP if return_log else np.exp(logP)
+
 
     def prob_t(self, seq_p, seq_ch, t, pattern_multiplicity = None, return_log=False, ignore_gaps=True):
         """
-        Compute the probability to observe seq_ch after time t starting from seq_p.
+        Compute the probability to observe seq_ch (child sequence) after time t starting from seq_p
+        (parent sequence).
 
         Parameters
         ----------
 
-         profile_p : np.array
-            Parent profile of shape (L, a), where
-            L - length of the sequence, a - alphabet size.
+         seq_p : character array
+            Parent sequence
 
-         profile_ch : np.array
-            Child profile of shape (L, a), where
-            L - length of the sequence, a - alphabet size.
+         seq_c : character array
+            Child sequence
 
          t : double
-            Time (branch len), separating the profiles.
+            Time (branch len) separating the profiles.
 
-         pattern_multiplicity : numpy array, None
-            if sequences are reduced by combining identical alignment patterns,
+         pattern_multiplicity : numpy array
+            If sequences are reduced by combining identical alignment patterns,
             these multplicities need to be accounted for when counting the number
             of mutations across a branch. If None, all pattern are assumed to
             occur exactly once.
 
-         return_log : bool, default False
-            Whether return log-probability.
+         return_log : bool
+            It True, return log-probability.
 
         Returns
         -------
          prob : np.array
-            resulting probability.
+            Resulting probability
 
         """
         seq_pair, multiplicity = self.compress_sequence_pair(seq_p, seq_ch,
@@ -670,19 +682,19 @@ class GTR(object):
         ----------
 
          seq_p : character array
-            parent sequence
+            Parent sequence
 
          seq_c : character array
-            child sequence
+            Child sequence
 
-         pattern_multiplicity : numpy array, None
-            if sequences are reduced by combining identical alignment patterns,
+         pattern_multiplicity : numpy array
+            If sequences are reduced by combining identical alignment patterns,
             these multplicities need to be accounted for when counting the number
             of mutations across a branch. If None, all pattern are assumed to
             occur exactly once.
 
          ignore_gaps : bool
-            ignore gaps in distance calculations
+            If True, ignore gaps in distance calculations
 
         '''
         seq_pair, multiplicity = self.compress_sequence_pair(seq_p, seq_ch,
@@ -693,32 +705,33 @@ class GTR(object):
 
     def optimal_t_compressed(self, seq_pair, multiplicity, profiles=False):
         """
-        Find the optimal distance between the two sequences
+        Find the optimal distance between the two sequences, for compressed sequences
 
         Parameters
         ----------
 
          seq_pair : compressed_sequence_pair
-            compressed representation of sequences along a branch, either
+            Compressed representation of sequences along a branch, either
             as tuple of state pairs or as tuple of profiles.
 
          multiplicity : array
-            number of times each state pair in seq_pair appears (profile==False)
-            number of times an alignment pattern is observed (profiles==True)
+            Number of times each state pair in seq_pair appears (if profile==False)
+
+            Number of times an alignment pattern is observed (if profiles==True)
 
          profiles : bool, default False
-            the standard branch length optimization assumes fixed sequences at
+            The standard branch length optimization assumes fixed sequences at
             either end of the branch. With profiles==True, optimization is performed
             while summing over all possible states of the nodes at either end of the
             branch. Note that the meaning/format of seq_pair and multiplicity
-            depend on the value of profiles
+            depend on the value of profiles.
 
         """
 
         def _neg_prob(t, seq_pair, multiplicity):
             """
-            Probability to observe child given the the parent state, transition
-            matrix and the time of evolution (branch length).
+            Probability to observe a child given the the parent state, transition
+            matrix, and the time of evolution (branch length).
 
             Parameters
             ----------
@@ -778,29 +791,29 @@ class GTR(object):
 
     def prob_t_profiles(self, profile_pair, multiplicity, t, return_log=False, ignore_gaps=True):
         '''
-        calculate the probability of observing a node pair at a distance t
+        Calculate the probability of observing a node pair at a distance t
 
         Parameters
         ----------
 
           profile_pair: numpy arrays
-            probability distributions of the nucleotides at either
+            Probability distributions of the nucleotides at either
             end of the branch. pp[0] = parent, pp[1] = child
 
           multiplicity : numpy array
-            The number of times a an alignment pattern is observed
+            The number of times an alignment pattern is observed
 
           t : float
             Length of the branch separating parent and child
 
           ignore_gaps: bool
-            ignore mutations to and from gaps in distance calculations
+            If True, ignore mutations to and from gaps in distance calculations
 
-          return_log : bool, default False
+          return_log : bool
             Whether or not to exponentiate the result
 
         '''
-        if (t<0):
+        if t<0:
             logP = -ttconf.BIG_NUMBER
         else:
             Qt = self.expQt(t).T
@@ -813,10 +826,7 @@ class GTR(object):
             else:
                 logP = np.sum(multiplicity*np.log(overlap))
 
-            if return_log:
-                return logP
-            else:
-                return np.exp(logP)
+        return logP if return_log else np.exp(logP)
 
 
     def propagate_profile(self, profile, t, return_log=False):
@@ -835,8 +845,8 @@ class GTR(object):
          t : double
             Time to propagate
 
-         return_log: bool, default False
-            Whether to return log-probability
+         return_log: bool
+            If True, return log-probability
 
         Returns
         -------
@@ -849,10 +859,7 @@ class GTR(object):
         Qt = self.expQt(t)
         res = profile.dot(Qt)
 
-        if return_log:
-            return np.log(res)
-        else:
-            return res
+        return np.log(res) if return_log else res
 
 
     def _exp_lt(self, t):
@@ -879,13 +886,13 @@ class GTR(object):
         ----------
 
          t : float
-            time to propagate
+            Time to propagate
 
         Returns
         --------
 
          expQt : numpy.array
-            matrix exponential of exo(Qt)
+            Matrix exponential of exo(Qt)
         '''
         eLambdaT = np.diag(self._exp_lt(t)) # vector length = a
         Qs = self.v.dot(eLambdaT.dot(self.v_inv))   # This is P(nuc1 | given nuc_2)
@@ -910,7 +917,7 @@ class GTR(object):
         return Qsds
 
 
-    def expQsdsds(self, t):
+    def expQsdsds(self, s):
         '''
         Returns
         -------
@@ -926,16 +933,16 @@ class GTR(object):
 
     def sequence_logLH(self,seq, pattern_multiplicity=None):
         """
-        Returns the log-likelihood of sampling a sequence from equilibrium frequency
-        expects a sequence as numpy array
+        Returns the log-likelihood of sampling a sequence from equilibrium frequency.
+        Expects a sequence as numpy array
 
         Parameters
         ----------
 
          seq : numpy array
-            Compressed sequence as array of chars
+            Compressed sequence as an array of chars
 
-         pattern_multiplicity : numpy_array, None
+         pattern_multiplicity : numpy_array
             The number of times each position in sequence is observed in the
             initial alignment. If None, sequence is assumed to be not compressed
 
@@ -957,7 +964,7 @@ class GTR(object):
     def save_to_json(self, zip):
         d = {
         "full_gtr": self.mu * np.dot(self.Pi, self.W),
-        "Substitution rate" : mu,
+        "Substitution rate" : self.mu,
         "Equilibrium character composition": self.Pi,
         "Flow rate matrix": self.W
         }
